@@ -6,8 +6,8 @@
   clipper.py render DIR [--only 1,3]          cut the clips listed in DIR/picks.json
   clipper.py test                             self-check
 """
-# ponytail: macOS only (Vision and AppKit through vision.swift, because this ffmpeg has no
-# caption filters). Swap vision.swift for OpenCV and Pillow to support Windows and Linux.
+# Faces and captions go through a helper, because this ffmpeg has no caption filters: vision.swift (Vision and
+# AppKit) on a Mac, vision.py (OpenCV and Pillow) on Windows and Linux, or on a Mac with GTA_CLIPPER_PORTABLE=1.
 import argparse
 import json
 import os
@@ -33,7 +33,7 @@ BAND = (H - W) // 2  # black bar above and below a square frame
 
 
 def run(*cmd, **kw):
-    r = subprocess.run([str(c) for c in cmd], text=True, capture_output=True, **kw)
+    r = subprocess.run([str(c) for c in cmd], encoding="utf-8", errors="replace", capture_output=True, **kw)
     if r.returncode:
         sys.exit(f"{cmd[0]} failed: {r.stderr.strip()[-800:]}")
     return r.stdout
@@ -94,12 +94,12 @@ def prep(src, out):
     run("ffmpeg", "-y", "-v", "error", "-i", video, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav)
     run("whisper-cli", "-m", find_model(), "-f", wav, "-ml", "1", "-sow", "-oj", "-of", out / "whisper", "-np")
     wav.unlink()
-    raw = json.loads((out / "whisper.json").read_text())["transcription"]
+    raw = json.loads((out / "whisper.json").read_text(encoding="utf-8"))["transcription"]
     words = [{"w": t, "s": r["offsets"]["from"] / 1000, "e": r["offsets"]["to"] / 1000}
              for r in raw if (t := r["text"].strip()) and not t.startswith(("[", "(")) and not t.endswith(("]", ")"))]
-    (out / "words.json").write_text(json.dumps(words))
-    (out / "meta.json").write_text(json.dumps({"link": src} if is_link else {"source": str(video)}))
-    (out / "transcript.txt").write_text("".join(f"[{s:.1f}] {t}\n" for s, t in sentences(words)))
+    (out / "words.json").write_text(json.dumps(words), encoding="utf-8")
+    (out / "meta.json").write_text(json.dumps({"link": src} if is_link else {"source": str(video)}), encoding="utf-8")
+    (out / "transcript.txt").write_text("".join(f"[{s:.1f}] {t}\n" for s, t in sentences(words)), encoding="utf-8")
     print(f"{len(words)} words. Transcript: {out / 'transcript.txt'}")
 
 
@@ -240,13 +240,14 @@ def fill_gaps(values, default=0.5):
 
 
 def vision():
-    if sys.platform != "darwin":
-        sys.exit("clipper currently needs macOS. See the note at the top of clipper.py.")
+    """The command for the faces and captions helper."""
+    if sys.platform != "darwin" or os.environ.get("GTA_CLIPPER_PORTABLE"):
+        return [sys.executable, HERE / "vision.py"]
     exe, src = Path("~/.cache/gta-clipper/vision").expanduser(), HERE / "vision.swift"
     if not exe.exists() or exe.stat().st_mtime < src.stat().st_mtime:
         exe.parent.mkdir(parents=True, exist_ok=True)
         run("swiftc", "-O", src, "-o", exe)
-    return exe
+    return [exe]
 
 
 def size(video):
@@ -275,12 +276,24 @@ def find_faces(video, start, shots, tmp):
                 "-frames:v", 1, "-vf", "scale=640:-2", p)
             frames.append(p)
             owner.append(i)
-    lines = run(vision(), "faces", *frames).strip().splitlines()
+    lines = run(*vision(), "faces", *frames).strip().splitlines()
+    every = [[tuple(map(float, f.split())) for f in line.split(";")] if line != "null" else [] for line in lines]
+    steady = steady_face(every)
     found = [[] for _ in shots]
-    for i, line in zip(owner, lines):
-        if line != "null":
-            found[i].append(tuple(map(float, line.split())))
+    for i, fs in zip(owner, every):
+        if fs:  # the streamer's face where it usually sits, or else the helper's best face in that frame
+            found[i].append(next((f for f in fs if near(f, steady)), fs[0]))
     return [tuple(statistics.median(p[i] for p in f) for i in range(3)) if f else None for f in found]
+
+
+def near(a, b, gap=0.1):
+    return abs(a[0] - b[0]) < gap and abs(a[1] - b[1]) < gap
+
+
+def steady_face(frames):
+    """The face found in the same place in the most frames: the streamer's cam, not a GTA character in a cutscene."""
+    return max((f for fs in frames for f in fs), key=lambda f: sum(any(near(f, g) for g in fs) for fs in frames),
+               default=None)
 
 
 def clip_name(clip):
@@ -407,13 +420,13 @@ def render_clip(video, words, clip, style, out_dir):
         if bar:  # not in the timeline: overlaid on its own for the whole clip
             items.append({"path": str(tmp / "title.png"), "lines": hook_lines(hook, upper=False), "look": hook_look})
         spec = tmp / "spec.json"
-        spec.write_text(json.dumps({"width": W, "height": CAP_H, "items": items}))
-        run(vision(), "captions", spec)
+        spec.write_text(json.dumps({"width": W, "height": CAP_H, "items": items}), encoding="utf-8")
+        run(*vision(), "captions", spec)
         lines = ["ffconcat version 1.0"]
         for i, secs in timeline(shown, length):
-            lines += [f"file {items[0]['path'] if i is None else items[i + 1]['path']}", f"duration {secs:.3f}"]
-        lines.append(f"file {items[0]['path']}")  # ffconcat ignores the last entry's duration
-        (tmp / "captions.ffconcat").write_text("\n".join(lines) + "\n")
+            lines += [f"file '{Path(items[0 if i is None else i + 1]['path']).as_posix()}'", f"duration {secs:.3f}"]
+        lines.append(f"file '{Path(items[0]['path']).as_posix()}'")  # ffconcat ignores the last entry's duration
+        (tmp / "captions.ffconcat").write_text("\n".join(lines) + "\n", encoding="utf-8")
         y = caption_y - CAP_H // 2
         graph += f";[v0][1:v]overlay=0:{y}:eof_action=pass:format=auto"
         graph += f"[c0];[c0][2:v]overlay=0:{int(BAND * 0.7) - CAP_H // 2}:format=auto[out]" if bar else "[out]"
@@ -444,13 +457,13 @@ def section(link, start, end, folder):
 
 def render(folder, only):
     folder = Path(folder).expanduser()
-    picks = json.loads((folder / "picks.json").read_text())
-    meta = json.loads((folder / "meta.json").read_text())
-    words = json.loads((folder / "words.json").read_text())
+    picks = json.loads((folder / "picks.json").read_text(encoding="utf-8"))
+    meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+    words = json.loads((folder / "words.json").read_text(encoding="utf-8"))
     preset = HERE / "styles" / f"{picks.get('preset', 'classic')}.json"
     if not preset.exists():
         sys.exit(f"No style called {preset.stem}. Pick one of: {', '.join(p.stem for p in (HERE / 'styles').glob('*.json'))}")
-    base = {**STYLE, **json.loads(preset.read_text()), **picks.get("style", {})}
+    base = {**STYLE, **json.loads(preset.read_text(encoding="utf-8")), **picks.get("style", {})}
     out = folder / "clips"
     clips = sorted(picks["clips"], key=lambda c: c["rank"])
     for clip in clips:
@@ -521,6 +534,9 @@ def test():
     x, y, cw, ch = split_boxes(1920, 1080, 0.10, 0.54, 0.05)[2]  # IShowSpeed: cam halfway up the left, 0-386 x 461-701
     assert x == 0 and cw <= 386 and 461 <= y and y + ch <= 701 and y < 0.54 * 1080 < y + ch
     assert choose_layout([(0.10, 0.54, 0.05)]) == "split"
+    cutscene = [[(0.5, 0.4, 0.3), (0.09, 0.52, 0.04)], [(0.3, 0.5, 0.25), (0.09, 0.53, 0.04)], [(0.09, 0.52, 0.04)]]
+    assert steady_face(cutscene) == (0.09, 0.52, 0.04)  # Speed's cam, not the bigger faces that move around
+    assert steady_face([[], []]) is None and not near((0.5, 0.5), (0.7, 0.5))
     assert zoomed("a", "b", 100, 100, [], 1.1, 0.5) == "[a]null[b]"
     print("ok")
 

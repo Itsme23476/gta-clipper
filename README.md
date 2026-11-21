@@ -8,12 +8,21 @@ Everything runs on your own computer except picking the moments, which uses your
 
 ## What you need
 
-- A Mac. Face detection and captions use frameworks built into macOS.
 - Claude Code, which needs a paid Claude plan.
-- FFmpeg and whisper.cpp: `brew install ffmpeg whisper-cpp`
-- Swift, from the Xcode Command Line Tools: `xcode-select --install`
 - A Whisper model, about 150 MB. The skill offers to download one if you don't have it.
-- yt-dlp, for Twitch, Kick and YouTube links: `brew install yt-dlp`
+
+On a Mac:
+
+- FFmpeg, whisper.cpp and yt-dlp: `brew install ffmpeg whisper-cpp yt-dlp`
+- Swift, from the Xcode Command Line Tools: `xcode-select --install`
+
+On Windows:
+
+- Python 3 from python.org, then `pip install opencv-python-headless pillow`
+- FFmpeg and yt-dlp: `winget install Gyan.FFmpeg yt-dlp.yt-dlp`
+- whisper.cpp: download `whisper-bin-x64.zip` from the [whisper.cpp releases](https://github.com/ggml-org/whisper.cpp/releases), unzip it, and add the folder with `whisper-cli.exe` to your PATH.
+
+yt-dlp is only needed for Twitch, Kick and YouTube links.
 
 ## Install
 
@@ -50,12 +59,13 @@ Each style is a small file in `styles/`. Show it a Short whose captions you like
 
 ## Limits
 
-- Mac only for now.
+- It's tested on a Mac. On Windows it uses OpenCV and Pillow in place of the Mac's own frameworks. That path was tested on a Mac, not yet on a Windows PC. Captions use the closest Windows fonts, so they look slightly different.
 - Finished streams only, not live ones.
 - It picks moments from what's said, not what's on screen, so a moment that only looks good won't be found.
 - Subscriber-only VODs need your Twitch login. Download those yourself and give it the file.
 - Long streams take a while to download and transcribe.
 - It's set up for English. Whisper mishears names, so read the captions and tell it what to fix.
+- Loud game music can make Whisper repeat one line for minutes, and nothing said in that stretch can be clipped.
 
 Only clip videos you own or have permission to use, such as a streamer's clipping campaign. Read each campaign's rules before posting: some don't accept AI-edited clips.
 

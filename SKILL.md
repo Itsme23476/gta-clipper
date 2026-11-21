@@ -21,13 +21,15 @@ Everything runs on this computer except picking the moments, which is your own r
 python3 ~/.claude/skills/gta-clipper/clipper.py prep "<LINK OR VIDEO>"
 ```
 
+On Windows, use `python` wherever these steps say `python3`. On Windows and Linux, faces and captions need OpenCV and Pillow: if it says they're missing, ask before running `pip install opencv-python-headless pillow`.
+
 It takes a Twitch VOD (`twitch.tv/videos/<id>`), a Twitch clip, a Kick VOD (`kick.com/<channel>/videos/<id>`), a YouTube link or a file. For a link it downloads only the audio now, and each approved clip's video when it renders, so a 14-hour stream never fills the disk. A long stream takes a while to download and transcribe, so run it in the background and tell the user.
 
 If it says the stream is still live, tell the user to come back once it has ended. If yt-dlp says the VOD is for subscribers only, it needs the user's Twitch login: they can download the VOD themselves and give you the file.
 
 If it says no Whisper model was found, search for an existing `ggml-*.bin` file and pass it as `WHISPER_MODEL=<path>`. Only offer to download one if none exists. It is about 150 MB: `mkdir -p ~/.cache/whisper && curl -L -o ~/.cache/whisper/ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin`. Add `--out <folder>` to choose where it works. The default is `~/Desktop/Clips/<stream title>-<id>/`. Running it again on the same link reuses what it already downloaded.
 
-**2. Pick the moments.** Read all of `transcript.txt`. Each line starts with its time in seconds, and a `-` or `>>` marks a new speaker. A stream transcript is long, so read it in parts with the Read tool's offset and limit, and keep a shortlist as you go. Choose the best moments, 20 to 60 seconds each unless the user says otherwise:
+**2. Pick the moments.** Read all of `transcript.txt`. Each line starts with its time in seconds, and a `-` or `>>` marks a new speaker. A stream transcript is long, so read it in parts with the Read tool's offset and limit, and keep a shortlist as you go. If one line repeats over and over, Whisper lost that stretch under game music: skip it. Choose the best moments, 20 to 60 seconds each unless the user says otherwise:
 
 - The moments a viewer would clip: big reactions, chases, crashes, funny fails, run-ins with NPCs or the police, and wins. Skip dead air, menus, loading screens, reading chat, and ad or sponsor reads.
 - It makes sense to someone who never saw the stream, with no missing context.
@@ -63,7 +65,7 @@ Wait for the user's OK on both. They may drop or change some clips.
 
 `hook` is a teaser of up to six words in capitals, shown in a box for the first two seconds, such as `HE CRASHED *ON PURPOSE*...`. Make it a cliffhanger, not a summary, and wrap the word to colour in `*asterisks*`.
 
-Whisper mishears names, GTA 6 ones included: Leonida, Vice City, Lucia, Jason, and the streamer's own name. Read for that and add a top-level `"fix"`. Put it on a single clip instead if a word is only wrong there.
+Whisper mishears names, GTA 6 ones included: Leonida, Vice City, Lucia (often "Lucy"), Jason, and the streamer's own name. It writes "chat" as "Chad" when a streamer talks to chat. Read for that and add a top-level `"fix"`. Put it on a single clip instead if a word is only wrong there.
 
 **5. Render:**
 
@@ -86,7 +88,7 @@ Style keys: `font`, `size`, `color`, `highlight`, `stroke`, `stroke_width` (0 fo
 - Layout: `line_words` breaks a caption into lines of that many words, and a key word gets its own line. `stagger` steps each line right by that many pixels. `reveal: true` shows each word as it is spoken. `frame: "square"` puts a 1:1 picture between black bars, for the crop layout. `kinetic` (such as 1.35) draws any caption holding a key word that many times bigger, so plain lines stay subtitle-sized.
 - Hook: `hook_font`, `hook_highlight` (the starred word), `hook_box` (box colour).
 
-Fonts are macOS font names such as `HelveticaNeue-Medium`, `Didot-Bold` or `AvenirNext-Heavy`.
+Fonts are macOS font names such as `HelveticaNeue-Medium`, `Didot-Bold` or `AvenirNext-Heavy`. On Windows and Linux the built-in styles use the closest fonts there, so they look slightly different. A style can also name a font file, such as `C:/Windows/Fonts/impact.ttf`.
 
 ## Teach it a style
 

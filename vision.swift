@@ -1,5 +1,6 @@
 // Mac helpers for clipper.py, using frameworks already on the machine.
-//   vision faces IMG...     one line per image: "x y width" of the largest face (0-1, y from top), or "null"
+//   vision faces IMG...     one line per image: "x y width" of each face (0-1, y from top), largest first and
+//                           split by ";", or "null"
 //   vision captions SPEC    draw the transparent caption images listed in a JSON spec, one or more lines each
 import AppKit
 import Vision
@@ -26,9 +27,8 @@ func faces(_ paths: [String]) {
               let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { print("null"); continue }
         let req = VNDetectFaceRectanglesRequest()
         try? VNImageRequestHandler(cgImage: cg).perform([req])
-        if let b = (req.results ?? []).max(by: { $0.boundingBox.width < $1.boundingBox.width })?.boundingBox {
-            print("\(b.midX) \(1 - b.midY) \(b.width)")
-        } else { print("null") }
+        let found = (req.results ?? []).map { $0.boundingBox }.sorted { $0.width > $1.width }
+        print(found.isEmpty ? "null" : found.map { "\($0.midX) \(1 - $0.midY) \($0.width)" }.joined(separator: ";"))
     }
 }
 
