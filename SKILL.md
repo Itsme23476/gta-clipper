@@ -62,7 +62,7 @@ Wait for the user's OK on both. They may drop or change some clips.
 
 `game` lists the stretches where the game's characters talk, as `[start, end]` in seconds: a line's start and the next line's start in the transcript. Those words get no captions, because GTA shows its own subtitles, so the captions are only the streamer. Cutscenes, NPCs and phone calls are game dialogue, and so is anything written like a script. Leave a line in when you can't tell.
 
-`highlights` is one to four words or short phrases spoken in that clip, at its biggest moments. Each one zooms into the gameplay. In `hormozi` they are also the punch words in giant capitals, so prefer one-word payoffs, and don't pick a word that is said many times.
+`highlights` is one or two words or short phrases the streamer says at the clip's payoff. The first time each is said, the facecam and the gameplay punch in together for a second and a half, at most twice a clip, so put the biggest one first. In `hormozi` they are also the punch words in giant capitals, so prefer one-word payoffs.
 
 `emphasis` is the key word or short phrase in most of the streamer's sentences, about one per caption. Highlights and emphasis must be the streamer's words, not the game's. Each one gets the accent colour and font, without a zoom: red script in `hormozi`, gold serif in `elegant`, a big white serif in `podcast`. Write `{"word": "#hex"}` to give a word its own colour. Phrases match only as a whole, so "get out of here" never colours every "of".
 
@@ -86,7 +86,7 @@ The layout is chosen for you: `split` puts the streamer's facecam on top and the
 
 Split keys: `face_height` is the facecam's share of the height (0.4, so the gameplay gets 60%). The top panel is the facecam's own box, found where the room stays still while the game moves, and centred on the face as far as the box allows. `cam_size` scales it (1): lower it, such as 0.9, if a strip of gameplay shows at an edge, or to zoom in on the face.
 
-Style keys: `font`, `size`, `color`, `highlight`, `stroke`, `stroke_width` (0 for no outline), `shadow` (blur in pixels, 0 for none), `y` (caption height, 0 to 1, except in `split`, where captions sit on the seam), `max_words` (words per caption), `upper`, `zoom`, `wide_zoom` (punch-in on wide shots in `crop`, 1 to turn it off).
+Style keys: `font`, `size`, `color`, `highlight`, `stroke`, `stroke_width` (0 for no outline), `shadow` (blur in pixels, 0 for none), `y` (caption height, 0 to 1, except in `split`, where captions sit on the seam), `max_words` (words per caption), `upper`, `zoom` (how far the picture punches in on a highlight, 1.2), `face_zoom` (the facecam's punch-in in `split`, 1.15), `wide_zoom` (punch-in on wide shots in `crop`, 1 to turn it off).
 - Key words: `highlight_font` and `highlight_scale` set highlights in a second font, larger, and `highlight_upper` puts them in capitals. `emphasis_font`, `emphasis_scale` and `emphasis_color` do the same for emphasis words, and default to the highlight ones.
 - Layout: `line_words` breaks a caption into lines of that many words, and a key word gets its own line. `stagger` steps each line right by that many pixels. `reveal: true` shows each word as it is spoken. `frame: "square"` puts a 1:1 picture between black bars, for the crop layout. `kinetic` (such as 1.35) draws any caption holding a key word that many times bigger, so plain lines stay subtitle-sized.
 - Hook: `hook_font`, `hook_highlight` (the starred word), `hook_box` (box colour).

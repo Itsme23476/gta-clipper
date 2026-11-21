@@ -21,7 +21,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 STYLE = {"font": "Arial Black", "size": 76, "color": "#FFFFFF", "highlight": "#FFD400", "stroke": "#000000",
-         "stroke_width": 16, "y": 0.66, "max_words": 3, "upper": True, "zoom": 1.12,
+         "stroke_width": 16, "y": 0.66, "max_words": 3, "upper": True, "zoom": 1.2, "face_zoom": 1.15,
          "highlight_font": "", "highlight_scale": 1.0, "shadow": 0, "line_words": 0, "stagger": 0, "reveal": False,
          "wide_zoom": 1.6, "hook_font": "AvenirNext-Heavy", "hook_highlight": "#D64045", "hook_box": "#000000",
          "highlight_upper": False, "emphasis_font": "", "emphasis_scale": 0, "emphasis_color": "", "frame": "",
@@ -212,13 +212,14 @@ def timeline(chunks, duration):
     return out
 
 
-def zoom_windows(words, highlights, hold=2.0, spacing=4.0):
-    """Punch in each time a highlighted word or phrase is spoken, at least `spacing` seconds apart."""
+def zoom_windows(words, highlights, hold=1.5, most=2, spacing=3.0):
+    """Punch in the first time each highlighted word or phrase is said: at most `most` times a clip, so each one
+    lands, and at least `spacing` seconds apart."""
     out = []
-    for i in sorted(mark(words, {h: 1 for h in highlights})):
-        if not out or words[i]["s"] >= out[-1][0] + spacing:
-            out.append((words[i]["s"], words[i]["s"] + hold))
-    return out
+    for t in (words[min(hits)]["s"] for h in highlights if (hits := mark(words, {h: 1}))):  # in the order listed
+        if len(out) < most and all(abs(t - a) >= spacing for a, _ in out):
+            out.append((t, t + hold))
+    return sorted(out)
 
 
 def x_expr(shots, xs):
@@ -427,8 +428,9 @@ def render_clip(video, words, clip, style, out_dir):
             top_h, (gx, gw), (x, y, cw, ch) = split_boxes(src_w, src_h, fx, fy, fw, edges, style["face_height"],
                                                           style["cam_size"])
             caption_y = top_h  # on the seam between face and gameplay
-            graph = (f"[0:v]split[f][g];[f]crop={cw}:{ch}:{x}:{y},scale={W}:{top_h}:flags=lanczos,setsar=1[top];"
-                     f"[g]crop={gw}:{src_h}:{gx}:0,scale={W}:{H - top_h}:flags=lanczos,setsar=1[g0];"
+            graph = (f"[0:v]split[f][g];[f]crop={cw}:{ch}:{x}:{y},scale={W}:{top_h}:flags=lanczos,setsar=1[f0];"
+                     + zoomed("f0", "top", W, top_h, windows, style["face_zoom"], 0.45) + ";"  # face and game punch in
+                     f"[g]crop={gw}:{src_h}:{gx}:0,scale={W}:{H - top_h}:flags=lanczos,setsar=1[g0];"  # together
                      + zoomed("g0", "bot", W, H - top_h, windows, style["zoom"], 0.5) + ";[top][bot]vstack[v0]")
         elif layout == "crop":
             # "square": a 1:1 frame between black bars, like a Hormozi Short. Otherwise full 9:16.
@@ -575,8 +577,10 @@ def test():
     assert [w["hl"] for l in hook for w in l] == [False, False, True, True, True]
     assert slug("You're Gonna Suck, 1,100 Times") == "youre-gonna-suck-1100-times"
     assert not slug("a" * 49 + " b").endswith("-")
-    assert zoom_windows(ws, ["free"]) == [(1.0, 3.0)]
-    assert zoom_windows(ws, ["free money"]) == [(2.0, 4.0)]  # the phrase, not every "free"
+    assert zoom_windows(ws, ["free"]) == [(1.0, 2.5)]  # only the first "free"
+    assert zoom_windows(ws, ["free money"]) == [(2.0, 3.5)]  # the phrase, not every "free"
+    many = [{"w": w, "s": i * 4.0, "e": i * 4.0 + 1} for i, w in enumerate("cops crash wasted tiger".split())]
+    assert [a for a, _ in zoom_windows(many, ["tiger", "cops", "crash", "wasted"])] == [0.0, 12.0]  # the first two
     assert sum(s for _, s in timeline(ch, 5)) == 5
     assert x_expr([(0, 2), (2, 5)], [10, 20]) == "if(lt(t,2.000),10,20)"
     assert x_expr([(0, 5)], [10]) == "10"
