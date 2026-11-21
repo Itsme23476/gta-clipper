@@ -25,7 +25,7 @@ STYLE = {"font": "Arial Black", "size": 76, "color": "#FFFFFF", "highlight": "#F
          "highlight_font": "", "highlight_scale": 1.0, "shadow": 0, "line_words": 0, "stagger": 0, "reveal": False,
          "wide_zoom": 1.6, "hook_font": "AvenirNext-Heavy", "hook_highlight": "#D64045", "hook_box": "#000000",
          "highlight_upper": False, "emphasis_font": "", "emphasis_scale": 0, "emphasis_color": "", "frame": "",
-         "kinetic": 1, "face_height": 0.4, "cam_size": 1.4}
+         "kinetic": 1, "face_height": 0.4, "cam_size": 1.0}
 LOOK = ("font", "size", "color", "highlight", "highlight_font", "highlight_scale", "stroke", "stroke_width", "shadow",
         "stagger")
 W, H, CAP_H, HOOK_SECS = 1080, 1920, 480, 2.0
@@ -322,24 +322,87 @@ def zoomed(src, dst, w, h, windows, zoom, anchor):
             f"[{dst}a][{dst}z]overlay=0:0:enable='{on}'[{dst}]")
 
 
-def split_boxes(src_w, src_h, fx, fy, fw, share=0.4, reach=1.4):
+GRID_W, GRID_H = 192, 108  # the motion map's size
+
+
+def motion_map(video, start, length):
+    """How much each spot of a small grey copy of the clip changes from frame to frame, on average."""
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(start), "-t", str(length), "-i", str(video), "-vf",
+                          f"fps=3,scale={GRID_W}:{GRID_H},format=gray,tblend=all_mode=difference",
+                          "-f", "rawvideo", "-"], capture_output=True).stdout
+    n, size = 0, GRID_W * GRID_H
+    acc = [0] * size
+    for n in range(1, len(raw) // size + 1):
+        acc = [a + b for a, b in zip(acc, raw[(n - 1) * size:n * size])]
+    return [a / max(n, 1) for a in acc]
+
+
+def cam_edges(m, fx, fy, fw):
+    """The facecam's (left, top, right, bottom) borders as fractions of the frame, None where none was found.
+    A border is a long straight line that is still on the cam's side and busy on the game's side."""
+    # ponytail: needs the game to move during the clip. Over a still menu, cam_span falls back to guessing.
+    busy = [[v > max(3, 0.5 * statistics.median(m)) for v in m[y * GRID_W:(y + 1) * GRID_W]] for y in range(GRID_H)]
+    cx, cy, f = fx * GRID_W, fy * GRID_H, max(fw * GRID_W, 2)
+
+    def edge(along_x, step, band, start):
+        size, other = (GRID_W, GRID_H) if along_x else (GRID_H, GRID_W)
+        lo, hi = max(0, int(band[0])), min(other - 1, int(band[1]))
+        at = (lambda c, k: busy[k][c]) if along_x else (lambda c, k: busy[c][k])
+        best, score = None, 0.35  # busy outside and still inside along at least a third of its length
+        for c in range(int(start), -1 if step < 0 else size, step):
+            if 2 <= c <= size - 3 and hi > lo:
+                out = sum(at(c + step, k) + at(c + 2 * step, k) for k in range(lo, hi + 1))
+                ins = sum(at(c - step, k) + at(c - 2 * step, k) for k in range(lo, hi + 1))
+                if (out - ins) / 2 / (hi - lo + 1) > score:
+                    best, score = c, (out - ins) / 2 / (hi - lo + 1)
+        return best if best is None else (best + (step < 0)) / size  # one grid cell inside the border
+
+    tall = (cy - 1.5 * f, cy + 1.5 * f)  # the person moves, but the border runs the cam's whole height
+    left, right = edge(True, -1, tall, cx - f), edge(True, 1, tall, cx + f)
+    wide = (max((left or 0) * GRID_W, cx - 2.5 * f), min((right or 1) * GRID_W, cx + 2.5 * f))
+    return left, edge(False, -1, wide, cy - f), right, edge(False, 1, wide, cy + 1.2 * f)
+
+
+def cam_span(c, lo, hi, zone):
+    """The cam's (start, end) on one axis, all as fractions, and which end the crop keeps to: -1 start, 1 end, 0 the
+    face. lo and hi are the borders found, or None. A face within `zone` of the frame's edge has a cam that runs to it."""
+    at_lo, at_hi = c < zone, c > 1 - zone
+    lo, hi = 0 if at_lo else lo, 1 if at_hi else hi
+    if lo is not None and hi is not None:  # a border much farther from the face than the other side is a false one
+        if not at_lo and c - lo > 1.6 * (hi - c):
+            lo = None
+        elif not at_hi and hi - c > 1.6 * (c - lo):
+            hi = None
+    if lo is None and hi is None:
+        return 0, 1, 0
+    # mirror the known end around the face, a little short so a guess errs inside the cam, and keep to the known
+    # end if it is the frame's edge
+    if lo is None:
+        return max(c - 0.85 * (hi - c), 0), hi, 1 if at_hi else 0
+    if hi is None:
+        return lo, min(c + 0.85 * (c - lo), 1), -1 if at_lo else 0
+    return lo, hi, 0
+
+
+def place(c, n, lo, hi, keep):
+    return even(min(max(lo if keep < 0 else hi - n if keep > 0 else c - n / 2, lo), hi - n))
+
+
+def split_boxes(src_w, src_h, fx, fy, fw, edges=(None,) * 4, share=0.4, scale=1.0):
     """Facecam on top (share of the height), gameplay below. Returns the top panel's height, the gameplay crop (x, w)
-    and the facecam crop (x, y, w, h)."""
-    # ponytail: assumes the facecam is a box against the nearest side (in a corner, or halfway up), reaching about
-    # `reach` times the face's distance from that side, and that it stays put. Detect the cam's border if that fails.
+    and the facecam crop (x, y, w, h): as much of the cam as fits the panel, centred on the face where the cam allows."""
     top_h = even(H * share)
     aspect = W / top_h
-    dx = (fx if fx < 0.5 else 1 - fx) * src_w  # face centre to the nearest side
-    dy = (fy if fy < 0.5 else 1 - fy) * src_h  # and to the nearest top or bottom
-    mid = abs(fy - 0.5) <= 0.15  # a cam halfway up the side touches neither: size it from the side, centred on the face
-    cam_w = even(min(max(reach * dx, 0 if mid else reach * dy * aspect, 2.2 * fw * src_w), src_w, src_h * aspect))
+    x0, x1, keep_x = cam_span(fx, edges[0], edges[2], 0.25)
+    y0, y1, keep_y = cam_span(fy, edges[1], edges[3], 0.35)
+    x0, x1, y0, y1 = x0 * src_w, x1 * src_w, y0 * src_h, y1 * src_h
+    cam_w = even(min(max(min(x1 - x0, (y1 - y0) * aspect) * scale, 2.2 * fw * src_w), src_w, src_h * aspect))
     cam_h = even(cam_w / aspect)
-    x = 0 if fx < 0.5 else src_w - cam_w
-    y = fy * src_h - cam_h / 2 if mid else 0 if fy < 0.5 else src_h - cam_h
-    y = even(min(max(y, 0), src_h - cam_h))
+    x = place(fx * src_w, cam_w, min(x0, src_w - cam_w), max(x1, cam_w), keep_x)
+    y = place(fy * src_h + 0.08 * cam_h, cam_h, min(y0, src_h - cam_h), max(y1, cam_h), keep_y)  # a little headroom
     game_w = even(min(src_h * W / (H - top_h), src_w))  # fills the bottom panel from the middle of the screen,
     gx = (src_w - game_w) // 2  # slid sideways so the cam doesn't show in it too
-    gx = max(gx, cam_w) if fx < 0.5 else min(gx, src_w - cam_w - game_w)
+    gx = max(gx, x1) if fx < 0.5 else min(gx, x0 - game_w)
     return top_h, (even(min(max(gx, 0), src_w - game_w)), game_w), (x, y, cam_w, cam_h)
 
 
@@ -360,7 +423,8 @@ def render_clip(video, words, clip, style, out_dir):
         caption_y = int(H * style["y"])
         if layout == "split":  # facecam on top, gameplay below, zooming in on the gameplay at each highlight
             fx, fy, fw = (statistics.median(f[i] for f in seen) for i in range(3))
-            top_h, (gx, gw), (x, y, cw, ch) = split_boxes(src_w, src_h, fx, fy, fw, style["face_height"],
+            edges = cam_edges(motion_map(video, start, length), fx, fy, fw)
+            top_h, (gx, gw), (x, y, cw, ch) = split_boxes(src_w, src_h, fx, fy, fw, edges, style["face_height"],
                                                           style["cam_size"])
             caption_y = top_h  # on the seam between face and gameplay
             graph = (f"[0:v]split[f][g];[f]crop={cw}:{ch}:{x}:{y},scale={W}:{top_h}:flags=lanczos,setsar=1[top];"
@@ -388,12 +452,13 @@ def render_clip(video, words, clip, style, out_dir):
         # highlights: zoom words in the highlight font. emphasis: more key words, in the emphasis font if set.
         big = {"f": style["highlight_font"] or None, "z": style["highlight_scale"], "up": style["highlight_upper"]}
         accent = {"f": style["emphasis_font"] or big["f"], "z": style["emphasis_scale"] or big["z"], "up": False}
-        marks = {i: {**big, "c": c} for i, c in mark(inside, {h: style["highlight"] for h in highlights}).items()}
+        said = [w for w in inside if not w.get("game")]  # captions are the streamer's words: GTA subtitles its own
+        marks = {i: {**big, "c": c} for i, c in mark(said, {h: style["highlight"] for h in highlights}).items()}
         colours = {}
         for e in clip.get("emphasis", []):  # "word", or {"word": "#hex"} for its own colour
             colours.update(e if isinstance(e, dict) else {e: style["emphasis_color"] or style["highlight"]})
-        marks.update({i: {**accent, "c": c} for i, c in mark(inside, colours).items()})
-        chunks = chunk_words(inside, marks, style["max_words"]) if inside else []
+        marks.update({i: {**accent, "c": c} for i, c in mark(said, colours).items()})
+        chunks = chunk_words(said, marks, style["max_words"]) if said else []
         for c in chunks:
             for w in c["words"]:
                 w["t"] = w["t"].upper() if style["upper"] or w.get("up") else w["t"]
@@ -469,6 +534,8 @@ def render(folder, only):
     for clip in clips:
         if not only or clip["rank"] in only:
             fixed = apply_fixes(words, {**picks.get("fix", {}), **clip.get("fix", {})})
+            game = clip.get("game", [])  # [start, end] spans of game dialogue, which get no captions
+            fixed = [{**w, "game": True} if any(a <= w["s"] < b for a, b in game) else w for w in fixed]
             video = meta.get("source")
             if not video:  # a link: fetch just this clip, then time everything from its start
                 a, b = clip["start"], clip["end"]
@@ -525,14 +592,18 @@ def test():
     assert choose_layout([(0.89, 0.82, 0.07)]) == "split"
     assert choose_layout([(0.5, 0.4, 0.2)]) == "crop"
     assert choose_layout([None, None, (0.5, 0.4, 0.2)]) == "fit"
-    top, (gx, gw), (x, y, cw, ch) = split_boxes(1920, 1080, 0.14, 0.15, 0.04)  # xQc: small cam, top left
-    assert top == 768 and (gx, gw) == (454, 1012)  # gameplay fills 1080x1152 from the middle
-    assert (x, y) == (0, 0) and abs(cw - 375) < 10 and abs(ch - 270) < 10  # his cam is 375x270
-    top, (gx, gw), (x, y, cw, ch) = split_boxes(1920, 1080, 0.834, 0.73, 0.14)  # Jynxzi: big face, bottom right
-    assert x + cw == 1920 and y + ch == 1080 and abs(cw - 585) < 20 and abs(ch - 435) < 20  # his cam is 585x435
-    assert gx + gw <= x  # the gameplay slides left to keep his cam out
-    x, y, cw, ch = split_boxes(1920, 1080, 0.10, 0.54, 0.05)[2]  # IShowSpeed: cam halfway up the left, 0-386 x 461-701
-    assert x == 0 and cw <= 386 and 461 <= y and y + ch <= 701 and y < 0.54 * 1080 < y + ch
+    def leak(crop, cam):  # pixels of the crop outside the real cam
+        x, y, w, h = crop
+        return max(cam[0] - x, 0) + max(cam[1] - y, 0) + max(x + w - cam[2], 0) + max(y + h - cam[3], 0)
+    top, (gx, gw), crop = split_boxes(1920, 1080, 0.14, 0.15, 0.04, (None, None, 360 / 1920, 280 / 1080))  # xQc
+    assert top == 768 and (gx, gw) == (454, 1012) and leak(crop, (0, 0, 375, 270)) < 15  # his 375x270 cam
+    top, (gx, gw), crop = split_boxes(1920, 1080, 0.834, 0.73, 0.14, (None, 120 / 1080, None, None))  # Jynxzi
+    assert leak(crop, (1335, 645, 1920, 1080)) < 40 and gx + gw <= crop[0]  # a false top border is ignored
+    x, y, w, h = split_boxes(1920, 1080, 0.091, 0.53, 0.036, (None, 450 / 1080, 385 / 1920, None))[2]  # Speed
+    assert leak((x, y, w, h), (0, 460, 388, 700)) < 15 and abs(x + w / 2 - 0.091 * 1920) < 10  # face centred
+    assert split_boxes(1920, 1080, 0.091, 0.53, 0.036)[2][2] > 300  # nothing found: still about his cam's size
+    assert cam_span(0.5, None, None, 0.25) == (0, 1, 0) and cam_span(0.1, None, 0.2, 0.25) == (0, 0.2, 0)
+    assert [round(v, 2) for v in cam_span(0.8, None, None, 0.25)] == [0.63, 1, 1]  # a corner: keep to its edge
     assert choose_layout([(0.10, 0.54, 0.05)]) == "split"
     cutscene = [[(0.5, 0.4, 0.3), (0.09, 0.52, 0.04)], [(0.3, 0.5, 0.25), (0.09, 0.53, 0.04)], [(0.09, 0.52, 0.04)]]
     assert steady_face(cutscene) == (0.09, 0.52, 0.04)  # Speed's cam, not the bigger faces that move around

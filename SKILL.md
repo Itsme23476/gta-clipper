@@ -55,13 +55,16 @@ Wait for the user's OK on both. They may drop or change some clips.
 {"preset": "hormozi",
  "fix": {"Leo Nida": "Leonida"},
  "clips": [{"rank": 1, "score": 9, "title": "Short title", "caption": "Post caption with hashtags",
-            "start": 123.4, "end": 171.2, "highlights": ["cops", "crashed"], "hook": "HE DID NOT SEE *THAT* COMING...",
+            "start": 123.4, "end": 171.2, "game": [[125.0, 131.5], [140.2, 144.0]],
+            "highlights": ["cops", "crashed"], "hook": "HE DID NOT SEE *THAT* COMING...",
             "emphasis": ["no way", "get out", {"wasted": "#F0484E"}]}]}
 ```
 
+`game` lists the stretches where the game's characters talk, as `[start, end]` in seconds: a line's start and the next line's start in the transcript. Those words get no captions, because GTA shows its own subtitles, so the captions are only the streamer. Cutscenes, NPCs and phone calls are game dialogue, and so is anything written like a script. Leave a line in when you can't tell.
+
 `highlights` is one to four words or short phrases spoken in that clip, at its biggest moments. Each one zooms into the gameplay. In `hormozi` they are also the punch words in giant capitals, so prefer one-word payoffs, and don't pick a word that is said many times.
 
-`emphasis` is the key word or short phrase in most sentences, about one per caption. Each one gets the accent colour and font, without a zoom: red script in `hormozi`, gold serif in `elegant`, a big white serif in `podcast`. Write `{"word": "#hex"}` to give a word its own colour. Phrases match only as a whole, so "get out of here" never colours every "of".
+`emphasis` is the key word or short phrase in most of the streamer's sentences, about one per caption. Highlights and emphasis must be the streamer's words, not the game's. Each one gets the accent colour and font, without a zoom: red script in `hormozi`, gold serif in `elegant`, a big white serif in `podcast`. Write `{"word": "#hex"}` to give a word its own colour. Phrases match only as a whole, so "get out of here" never colours every "of".
 
 `hook` is a teaser of up to six words in capitals, shown in a box for the first two seconds, such as `HE CRASHED *ON PURPOSE*...`. Make it a cliffhanger, not a summary, and wrap the word to colour in `*asterisks*`.
 
@@ -81,7 +84,7 @@ Edit `picks.json` and re-render only what changed with `--only 2`. For one clip,
 
 The layout is chosen for you: `split` puts the streamer's facecam on top and the gameplay below, with the captions on the seam, for a stream with a facecam on the left or right side, in a corner or halfway up. `crop` follows a talking head, such as a Just Chatting stream, and `fit` is for gameplay with no facecam. Set `"layout"` on a clip to override it.
 
-Split keys: `face_height` is the facecam's share of the height (0.4, so the gameplay gets 60%). `cam_size` scales the facecam crop (1.4): lower it if chat or gameplay shows around the cam, raise it if the cam is cut off.
+Split keys: `face_height` is the facecam's share of the height (0.4, so the gameplay gets 60%). The top panel is the facecam's own box, found where the room stays still while the game moves, and centred on the face as far as the box allows. `cam_size` scales it (1): lower it, such as 0.9, if a strip of gameplay shows at an edge, or to zoom in on the face.
 
 Style keys: `font`, `size`, `color`, `highlight`, `stroke`, `stroke_width` (0 for no outline), `shadow` (blur in pixels, 0 for none), `y` (caption height, 0 to 1, except in `split`, where captions sit on the seam), `max_words` (words per caption), `upper`, `zoom`, `wide_zoom` (punch-in on wide shots in `crop`, 1 to turn it off).
 - Key words: `highlight_font` and `highlight_scale` set highlights in a second font, larger, and `highlight_upper` puts them in capitals. `emphasis_font`, `emphasis_scale` and `emphasis_color` do the same for emphasis words, and default to the highlight ones.
