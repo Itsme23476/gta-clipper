@@ -288,14 +288,14 @@ def clip_name(clip):
 
 
 def choose_layout(faces, forced=None):
-    """crop: a talking head. split: a screen recording with a corner face bubble. fit: no face."""
+    """crop: a talking head. split: a facecam by the left or right edge, at any height. fit: no face."""
     seen = [f for f in faces if f]
     if forced and (seen or forced == "fit"):
         return forced
     if len(seen) <= len(faces) * 0.4:
         return "fit"
     x, y = (statistics.median(f[i] for f in seen) for i in (0, 1))
-    return "split" if abs(x - 0.5) > 0.25 and abs(y - 0.5) > 0.15 else "crop"
+    return "split" if abs(x - 0.5) > 0.25 else "crop"
 
 
 def zoomed(src, dst, w, h, windows, zoom, anchor):
@@ -312,16 +312,18 @@ def zoomed(src, dst, w, h, windows, zoom, anchor):
 def split_boxes(src_w, src_h, fx, fy, fw, share=0.4, reach=1.4):
     """Facecam on top (share of the height), gameplay below. Returns the top panel's height, the gameplay crop (x, w)
     and the facecam crop (x, y, w, h)."""
-    # ponytail: assumes the facecam is a box in the corner nearest the face, reaching about `reach` times the face's
-    # distance from that corner, and that it stays put for the whole clip. Detect the cam's border if that fails.
+    # ponytail: assumes the facecam is a box against the nearest side (in a corner, or halfway up), reaching about
+    # `reach` times the face's distance from that side, and that it stays put. Detect the cam's border if that fails.
     top_h = even(H * share)
     aspect = W / top_h
     dx = (fx if fx < 0.5 else 1 - fx) * src_w  # face centre to the nearest side
     dy = (fy if fy < 0.5 else 1 - fy) * src_h  # and to the nearest top or bottom
-    cam_w = even(min(max(reach * dx, reach * dy * aspect, 2.2 * fw * src_w), src_w, src_h * aspect))
+    mid = abs(fy - 0.5) <= 0.15  # a cam halfway up the side touches neither: size it from the side, centred on the face
+    cam_w = even(min(max(reach * dx, 0 if mid else reach * dy * aspect, 2.2 * fw * src_w), src_w, src_h * aspect))
     cam_h = even(cam_w / aspect)
     x = 0 if fx < 0.5 else src_w - cam_w
-    y = 0 if fy < 0.5 else src_h - cam_h
+    y = fy * src_h - cam_h / 2 if mid else 0 if fy < 0.5 else src_h - cam_h
+    y = even(min(max(y, 0), src_h - cam_h))
     game_w = even(min(src_h * W / (H - top_h), src_w))  # fills the bottom panel from the middle of the screen,
     gx = (src_w - game_w) // 2  # slid sideways so the cam doesn't show in it too
     gx = max(gx, cam_w) if fx < 0.5 else min(gx, src_w - cam_w - game_w)
@@ -516,6 +518,9 @@ def test():
     top, (gx, gw), (x, y, cw, ch) = split_boxes(1920, 1080, 0.834, 0.73, 0.14)  # Jynxzi: big face, bottom right
     assert x + cw == 1920 and y + ch == 1080 and abs(cw - 585) < 20 and abs(ch - 435) < 20  # his cam is 585x435
     assert gx + gw <= x  # the gameplay slides left to keep his cam out
+    x, y, cw, ch = split_boxes(1920, 1080, 0.10, 0.54, 0.05)[2]  # IShowSpeed: cam halfway up the left, 0-386 x 461-701
+    assert x == 0 and cw <= 386 and 461 <= y and y + ch <= 701 and y < 0.54 * 1080 < y + ch
+    assert choose_layout([(0.10, 0.54, 0.05)]) == "split"
     assert zoomed("a", "b", 100, 100, [], 1.1, 0.5) == "[a]null[b]"
     print("ok")
 

@@ -77,7 +77,7 @@ For a link, the first render of each clip downloads just that clip's video. Clip
 
 Edit `picks.json` and re-render only what changed with `--only 2`. For one clip, set `"zoom": false`, change `start` or `end`, or add `"style": {"highlight": "#00AAFF"}`. To change the whole batch, switch `preset` or add a top-level `"style"` with the keys to change.
 
-The layout is chosen for you: `split` puts the streamer's facecam on top and the gameplay below, with the captions on the seam, for a stream with a facecam in a corner. `crop` follows a talking head, such as a Just Chatting stream, and `fit` is for gameplay with no facecam. Set `"layout"` on a clip to override it.
+The layout is chosen for you: `split` puts the streamer's facecam on top and the gameplay below, with the captions on the seam, for a stream with a facecam on the left or right side, in a corner or halfway up. `crop` follows a talking head, such as a Just Chatting stream, and `fit` is for gameplay with no facecam. Set `"layout"` on a clip to override it.
 
 Split keys: `face_height` is the facecam's share of the height (0.4, so the gameplay gets 60%). `cam_size` scales the facecam crop (1.4): lower it if chat or gameplay shows around the cam, raise it if the cam is cut off.
 

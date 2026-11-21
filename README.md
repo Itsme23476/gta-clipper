@@ -35,7 +35,7 @@ To change anything, just ask: a bigger facecam, no zooms on one clip, a shorter 
 
 ## Layout
 
-- **Stream with a facecam in a corner:** the facecam on top, taking 40% of the height, and the gameplay below with 60%. Captions sit on the seam, and the gameplay zooms in on the big moments.
+- **Stream with a facecam on the left or right side:** the facecam on top, taking 40% of the height, and the gameplay below with 60%. Captions sit on the seam, and the gameplay zooms in on the big moments.
 - **Just Chatting or a talking head:** a crop that follows the face.
 - **No facecam:** the full frame, with bars above and below.
 
