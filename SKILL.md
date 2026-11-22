@@ -27,7 +27,7 @@ It takes a Twitch VOD (`twitch.tv/videos/<id>`), a Twitch clip, a Kick VOD (`kic
 
 If it says the stream is still live, tell the user to come back once it has ended. If yt-dlp says the VOD is for subscribers only, it needs the user's Twitch login: they can download the VOD themselves and give you the file.
 
-If it says no Whisper model was found, search for an existing `ggml-*.bin` file and pass it as `WHISPER_MODEL=<path>`. Only offer to download one if none exists. It is about 150 MB: `mkdir -p ~/.cache/whisper && curl -L -o ~/.cache/whisper/ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin`. Add `--out <folder>` to choose where it works. The default is `~/Desktop/Clips/<stream title>-<id>/`. Running it again on the same link reuses what it already downloaded.
+If it says no Whisper model was found, search for an existing `ggml-*.bin` file and pass it as `WHISPER_MODEL=<path>`. Only offer to download one if none exists. It is about 150 MB: `mkdir -p ~/.cache/whisper && curl -L -o ~/.cache/whisper/ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin`. For accurate captions, render re-transcribes each clip with `~/.cache/whisper/ggml-large-v3-turbo-q5_0.bin` (or `WHISPER_CLIP_MODEL=<path>`) and times every word with Whisper's DTW alignment; plain Whisper word times can run a second early. If that model is missing, offer once to download it, about 550 MB: `curl -L -o ~/.cache/whisper/ggml-large-v3-turbo-q5_0.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin`. Without it, render uses the stream transcript as before. Add `--out <folder>` to choose where it works. The default is `~/Desktop/Clips/<stream title>-<id>/`. Running it again on the same link reuses what it already downloaded.
 
 **2. Pick the moments.** Read all of `transcript.txt`. Each line starts with its time in seconds, and a `-` or `>>` marks a new speaker. A stream transcript is long, so read it in parts with the Read tool's offset and limit, and keep a shortlist as you go. If one line repeats over and over, Whisper lost that stretch under game music: skip it. Choose the best moments, 20 to 60 seconds each unless the user says otherwise:
 
@@ -76,7 +76,7 @@ Whisper mishears names, GTA 6 ones included: Leonida, Vice City, Lucia (often "L
 python3 ~/.claude/skills/gta-clipper/clipper.py render "<FOLDER>"
 ```
 
-For a link, the first render of each clip downloads just that clip's video. Clips land in `<FOLDER>/clips/`, with titles and captions in `post-copy.md`. Open at least one clip's frames to check the result before saying it's done.
+For a link, the first render of each clip downloads just that clip's video. Each clip's new words are cached in `<FOLDER>/sections/<start>-<end>.dtw.json`. Read them after rendering: fix misheard words with `fix`, and check that `highlights` and `emphasis` match words that are actually there, or the zoom and colour are lost. Clips land in `<FOLDER>/clips/`, with titles and captions in `post-copy.md`. Open at least one clip's frames to check the result before saying it's done.
 
 ## Changes
 

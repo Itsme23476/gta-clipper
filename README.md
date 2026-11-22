@@ -9,7 +9,7 @@ Everything runs on your own computer except picking the moments, which uses your
 ## What you need
 
 - Claude Code, which needs a paid Claude plan.
-- A Whisper model, about 150 MB. The skill offers to download one if you don't have it.
+- Two Whisper models: `base.en` (about 150 MB) to read the whole stream quickly, and `large-v3-turbo` (about 550 MB) to re-transcribe each clip for accurate captions. The skill offers to download them if you don't have them.
 
 On a Mac:
 
@@ -63,7 +63,8 @@ Each style is a small file in `styles/`. Show it a Short whose captions you like
 - Finished streams only, not live ones.
 - It picks moments from what's said, not what's on screen, so a moment that only looks good won't be found.
 - Subscriber-only VODs need your Twitch login. Download those yourself and give it the file.
-- Long streams take a while to download and transcribe.
+- Long streams take a while to download and transcribe. The whole stream uses the fast model; only the clips you approve get the slower, accurate one.
+- Captions are timed with whisper.cpp's word alignment (DTW), so they land on the spoken word instead of up to a second early. Without the `large-v3-turbo` model, clips fall back to the fast model's wording and timing.
 - It's set up for English. Whisper mishears names, so read the captions and tell it what to fix.
 - Loud game music can make Whisper repeat one line for minutes, and nothing said in that stretch can be clipped.
 

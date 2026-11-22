@@ -55,6 +55,67 @@ def find_model():
     sys.exit("No Whisper model found. Set WHISPER_MODEL to a ggml-*.bin file.")
 
 
+def find_clip_model():
+    """A stronger model for re-transcribing each clip: slower, so only used on the clips, never the whole stream."""
+    for p in [os.environ.get("WHISPER_CLIP_MODEL"), "~/.cache/whisper/ggml-large-v3-turbo-q5_0.bin",
+              "~/.cache/whisper/ggml-large-v3-turbo.bin"]:
+        if p and Path(p).expanduser().exists():
+            return Path(p).expanduser()
+
+
+def whisper(model, wav, base, offset=0.0):
+    """Word timings from whisper-cli, shifted by offset seconds."""
+    run("whisper-cli", "-m", model, "-f", wav, "-ml", "1", "-sow", "-oj", "-of", base, "-np")
+    raw = json.loads(Path(f"{base}.json").read_text(encoding="utf-8"))["transcription"]
+    return [{"w": t, "s": r["offsets"]["from"] / 1000 + offset, "e": r["offsets"]["to"] / 1000 + offset}
+            for r in raw if (t := r["text"].strip()) and not t.startswith(("[", "(")) and not t.endswith(("]", ")"))]
+
+
+def whisper_dtw(model, wav, base, offset=0.0):
+    """Word timings from whisper's DTW token alignment. Plain whisper times can run a second early, so captions
+    showed before the words were said; DTW lands within about 0.1-0.3 s of the voice."""
+    preset = re.sub(r"-q\d.*$", "", Path(model).stem.removeprefix("ggml-")).replace("-", ".")  # large.v3.turbo
+    run("whisper-cli", "-m", model, "-f", wav, "-ojf", "-of", base, "-np", "-nfa", "--dtw", preset)
+    return dtw_words(json.loads(Path(f"{base}.json").read_text(encoding="utf-8", errors="replace")), offset)
+
+
+def dtw_words(full, offset=0.0):
+    """Join whisper's tokens into words, each starting at its first token's DTW time."""
+    words = []
+    for seg in full["transcription"]:
+        for tk in seg["tokens"]:
+            tx = tk["text"]
+            if tx.startswith("[_") or not tx.strip():
+                continue
+            t = tk["t_dtw"] / 100 - 0.1 if tk.get("t_dtw", -1) >= 0 else tk["offsets"]["from"] / 1000  # DTW runs ~0.1-0.2 s late
+            if tx.startswith(" ") or not words:
+                words.append({"w": tx.strip(), "s": t + offset, "e": tk["offsets"]["to"] / 1000 + offset})
+            else:
+                words[-1]["w"] += tx
+    for w, nxt in zip(words, words[1:]):  # a word lasts until the next one starts, at most 1.5 s
+        w["e"] = min(nxt["s"], w["s"] + 1.5)
+    if words:
+        words[-1]["e"] = max(words[-1]["e"], words[-1]["s"] + 0.3)
+    return [w for w in words if w["w"].strip(".,?!-") and not w["w"].startswith(("[", "("))]
+
+
+def retranscribe(words, media, a, b, folder, at):
+    """Swap the words from a to b for the clip model's, cached next to the clip. media starts at `at` seconds."""
+    model = find_clip_model()
+    if not model:
+        return words
+    cache = folder / "sections" / f"{a:.2f}-{b:.2f}.dtw.json"
+    if not cache.exists():
+        cache.parent.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory() as t:
+            wav = Path(t) / "clip.wav"
+            run("ffmpeg", "-y", "-v", "error", "-ss", a - at, "-t", b - a, "-i", media,
+                "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav)
+            cache.write_text(json.dumps(whisper_dtw(model, wav, Path(t) / "w", a)), encoding="utf-8")
+    return [w for w in words if w["s"] < a] + json.loads(cache.read_text(encoding="utf-8")) + \
+        [w for w in words if w["s"] >= b]
+
+
 def sentences(words):
     """[(start, text)] so the picker can see where each line begins."""
     out, cur, start = [], [], 0.0
@@ -92,11 +153,8 @@ def prep(src, out):
         video = Path(src).expanduser().resolve()
     wav = out / "audio.wav"
     run("ffmpeg", "-y", "-v", "error", "-i", video, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav)
-    run("whisper-cli", "-m", find_model(), "-f", wav, "-ml", "1", "-sow", "-oj", "-of", out / "whisper", "-np")
+    words = whisper(find_model(), wav, out / "whisper")
     wav.unlink()
-    raw = json.loads((out / "whisper.json").read_text(encoding="utf-8"))["transcription"]
-    words = [{"w": t, "s": r["offsets"]["from"] / 1000, "e": r["offsets"]["to"] / 1000}
-             for r in raw if (t := r["text"].strip()) and not t.startswith(("[", "(")) and not t.endswith(("]", ")"))]
     (out / "words.json").write_text(json.dumps(words), encoding="utf-8")
     (out / "meta.json").write_text(json.dumps({"link": src} if is_link else {"source": str(video)}), encoding="utf-8")
     (out / "transcript.txt").write_text("".join(f"[{s:.1f}] {t}\n" for s, t in sentences(words)), encoding="utf-8")
@@ -535,13 +593,13 @@ def render(folder, only):
     clips = sorted(picks["clips"], key=lambda c: c["rank"])
     for clip in clips:
         if not only or clip["rank"] in only:
-            fixed = apply_fixes(words, {**picks.get("fix", {}), **clip.get("fix", {})})
+            a, b = clip["start"], clip["end"]
+            video = meta.get("source") or section(meta["link"], a, b, folder)
+            said = retranscribe(words, video, a, b, folder, 0.0 if meta.get("source") else a)
+            fixed = apply_fixes(said, {**picks.get("fix", {}), **clip.get("fix", {})})
             game = clip.get("game", [])  # [start, end] spans of game dialogue, which get no captions
             fixed = [{**w, "game": True} if any(a <= w["s"] < b for a, b in game) else w for w in fixed]
-            video = meta.get("source")
-            if not video:  # a link: fetch just this clip, then time everything from its start
-                a, b = clip["start"], clip["end"]
-                video = section(meta["link"], a, b, folder)
+            if not meta.get("source"):  # a link: the video is just this clip, so time everything from its start
                 fixed = [{**w, "s": w["s"] - a, "e": w["e"] - a} for w in fixed]
                 clip = {**clip, "start": 0.0, "end": b - a}
             render_clip(video, fixed, clip, {**base, **clip.get("style", {})}, out)
@@ -551,6 +609,13 @@ def render(folder, only):
 
 
 def test():
+    tok = lambda t, ms, d: {"text": t, "offsets": {"from": ms, "to": ms + 200}, "t_dtw": d}
+    full = {"transcription": [{"tokens": [tok("[_BEG_]", 0, -1), tok(" S", 0, 150), tok("ike", 100, 160),
+                                          tok("!", 300, 180), tok(" Give", 900, 210), tok(" me", 1000, -1)]}]}
+    dw = dtw_words(full, 10.0)
+    assert [w["w"] for w in dw] == ["Sike!", "Give", "me"], dw
+    assert abs(dw[0]["s"] - 11.4) < 1e-9 and abs(dw[1]["s"] - 11.0 - 1.0) < 1e-9 and dw[0]["e"] == dw[1]["s"], dw
+    assert abs(dw[2]["s"] - 11.0) < 1e-9, dw  # no DTW time: falls back to the token's own start
     ws = [{"w": w, "s": i * 0.5, "e": i * 0.5 + 0.4} for i, w in enumerate("This is free. Really free money now".split())]
     ch = chunk_words(ws, {i: {"c": c} for i, c in mark(ws, {"free": "#F00"}).items()}, 3)
     assert [len(c["words"]) for c in ch] == [3, 3, 1], ch
